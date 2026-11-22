@@ -1,7 +1,7 @@
 'use strict';
 const PLAN=window.TRAIL_PLAN;
 if(!Array.isArray(PLAN)||PLAN.length!==22)throw Error('Programme absent ou incomplet');
-const KEY='trail45-v1',VERSION='2.0.0';
+const KEY='trail45-v1',VERSION='2.1.0';
 let state={sessions:{},exercises:{}};
 try{const s=JSON.parse(localStorage.getItem(KEY)||'null');if(s&&typeof s==='object'){state.sessions=s.sessions&&typeof s.sessions==='object'?s.sessions:{};state.exercises=s.exercises&&typeof s.exercises==='object'?s.exercises:{}}}catch(e){}
 const month=['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
@@ -31,12 +31,12 @@ const allSessions=()=>PLAN.flatMap(days);
 const qualityWeeks=()=>PLAN.filter(w=>w.family&&w.qkm);
 function calculation(w){
  if(!w.family)return null;
- const family=qualityWeeks().filter(x=>x.family===w.family&&x.week<w.week);
+ const family=qualityWeeks().filter(x=>x.family===w.family&&x.week<w.week&&(w.week<3||x.week>=3));
  if(!family.length)return {seconds:w.base,reason:'Allure initiale de cette famille.',source:null};
  const prev=family[family.length-1],last=calculation(prev);
  if(isDeload(w)){
    const failure=result(qid(prev)).status==='ECHEC';
-   return {seconds:Math.max(240,last.seconds+(failure?5:0)),reason:failure?'Semaine allégée : +5 s/km après un ÉCHEC.':'Semaine allégée : allure conservée, sans accélération.',source:prev.week};
+   return {seconds:Math.max(w.base-10,Math.min(w.base+15,last.seconds+(failure?5:0))),reason:failure?'Semaine allégée : +5 s/km après un ÉCHEC.':'Semaine allégée : allure conservée, sans accélération.',source:prev.week};
  }
  // A deload never consumes an OK from the last normal session.
  const normal=family.filter(x=>!isDeload(x));
@@ -44,11 +44,11 @@ function calculation(w){
  const anchorCalc=calculation(anchor),anchorStatus=result(qid(anchor)).status||'TODO';
  const between=family.filter(x=>x.week>anchor.week&&isDeload(x));
  const deloadFailed=between.some(x=>result(qid(x)).status==='ECHEC');
- if(deloadFailed)return {seconds:Math.max(240,anchorCalc.seconds+5),reason:'ÉCHEC pendant la semaine allégée : +5 s/km.',source:anchor.week};
- if(anchorStatus==='ECHEC')return {seconds:Math.max(240,anchorCalc.seconds+5),reason:'ÉCHEC sur la dernière séance normale : +5 s/km.',source:anchor.week};
+ if(deloadFailed)return {seconds:Math.max(w.base-10,Math.min(w.base+15,anchorCalc.seconds+5)),reason:'ÉCHEC pendant la semaine allégée : +5 s/km.',source:anchor.week};
+ if(anchorStatus==='ECHEC')return {seconds:Math.max(w.base-10,Math.min(w.base+15,anchorCalc.seconds+5)),reason:'ÉCHEC sur la dernière séance normale : +5 s/km.',source:anchor.week};
  if(anchorStatus==='OK'){
-  const delta=w.work>anchor.work?-2:-5;
-  return {seconds:Math.max(240,anchorCalc.seconds+delta),reason:delta===-2?'OK : volume de travail en hausse, −2 s/km.':'OK : volume stable ou réduit, −5 s/km.',source:anchor.week};
+  const delta=w.work>anchor.work?-2:0;
+  return {seconds:Math.max(w.base-10,Math.min(w.base+15,anchorCalc.seconds+delta)),reason:delta===-2?'OK : volume de travail en hausse, −2 s/km.':'OK : volume stable ou réduit, allure maintenue.',source:anchor.week};
  }
  return {seconds:anchorCalc.seconds,reason:anchorStatus==='LIMITE'?'LIMITE : allure maintenue.':anchorStatus==='SKIP'?'NON FAIT : allure maintenue.':'À FAIRE : aucune progression anticipée.',source:anchor.week};
 }
@@ -59,15 +59,15 @@ function persist(){try{localStorage.setItem(KEY,JSON.stringify(state));lastSaved
 const formatDate=s=>{const d=ld(s);return `${weekday[d.getDay()]} ${d.getDate()} ${month[d.getMonth()]}`};
 function noteFor(s){if(s.type!=='quality')return '';
  const w=s.w;
- if(w.week===17||w.week===19)return 'Terrain : séance spécifique trail à préciser selon la pente. Si réalisée en côte, piloter à l’effort plutôt qu’au min/km.';
- if(w.week===18)return 'Terrain vallonné possible : réguler l’effort selon le relief.';
- if(w.week===20||w.week===21)return 'Phase d’allègement : privilégier la fraîcheur, sans chercher à accélérer.';
+ if(w.notes)return w.notes;
+
+
  return w.family==='800'||w.family==='1000'?'Prévoir échauffement progressif et retour au calme. Ne pas augmenter vitesse et volume si la récupération est insuffisante.':'Effort soutenu mais contrôlé. Adapter l’allure à la fatigue et au terrain.';
 }
 function summary(w){let x=stats(w);return `<section class="summary"><div class="sub">Semaine ${w.week} · ${escapeHtml(w.block)}</div><div class="metric">${fmt(x.actual)} <span class="sub">/ ${fmt(x.planned)} km</span></div><div class="track"><div class="fill" style="width:${Math.min(100,x.planned?x.actual/x.planned*100:0)}%"></div></div><div class="statsline"><span>${x.done}/${x.total} séances validées</span><span>D+ : ${fmt(x.dplus)} / ${fmt(w.dplus)} m</span></div></section>`}
 function exerciseRows(id){return (state.exercises[id]||[]).map((x,i)=>`<div class="exercise"><div class="field wide"><label>Exercice</label><input data-ex="${id}" data-i="${i}" data-f="name" value="${escapeHtml(x.name||'')}" placeholder="Ex. Squat"></div><div class="field"><label>Séries</label><input type="number" inputmode="numeric" min="0" data-ex="${id}" data-i="${i}" data-f="sets" value="${escapeHtml(x.sets??'')}"></div><div class="field"><label>Répétitions</label><input type="number" inputmode="numeric" min="0" data-ex="${id}" data-i="${i}" data-f="reps" value="${escapeHtml(x.reps??'')}"></div><div class="field"><label>Charge kg</label><input type="number" inputmode="decimal" min="0" step="0.5" data-ex="${id}" data-i="${i}" data-f="kg" value="${escapeHtml(x.kg??'')}"></div><button class="btn danger" data-del="${id}" data-i="${i}" type="button">Supprimer</button></div>`).join('')}
 function dayCard(s){const d=ld(s.date),v=result(s.id),rest=s.type==='rest',str=s.type==='strength',q=s.type==='quality',c=q?calculation(s.w):null;
-return `<article class="day ${s.date===TODAY?'today':''}" id="s-${s.id}"><div class="dayhead"><div class="datepill">${d.getDate()}</div><div class="daytitle"><div class="dayname">${escapeHtml(formatDate(s.date))}</div><h3>${escapeHtml(s.title)}</h3></div>${rest?'':`<span class="pill ${v.status==='OK'?'ok':v.status==='ECHEC'?'fail':v.status==='LIMITE'?'limit':''}">${statusLabel[v.status]||'À FAIRE'}</span>`}</div>${rest?'<p class="detail">Repos · aucune saisie nécessaire.</p>':`<div class="detail">${str?'Carnet de musculation':`Prévu : <strong>${fmt(s.km)} km</strong>${c?` · Allure cible : <strong>${pace(c.seconds)}</strong>`:''}${q&&s.w.reps?`<div>${s.w.reps} répétitions · ${fmt(s.w.work)} ${s.w.family==='SEUIL'?'min':'km'} de travail</div>`:''}`}</div>${q?`<div class="insight"><strong>Pourquoi cette allure ?</strong><div>${escapeHtml(c.reason)}${c.source?' (référence : semaine '+c.source+')':''}</div><div class="help">${escapeHtml(noteFor(s))}</div></div>`:''}<div class="fields">${str?'':`<div class="field"><label>Km réalisés</label><input type="number" inputmode="decimal" min="0" step="0.1" data-id="${s.id}" data-key="km" value="${escapeHtml(v.km??'')}" placeholder="—"></div><div class="field"><label>D+ réalisé (m)</label><input type="number" inputmode="numeric" min="0" step="1" data-id="${s.id}" data-key="dplus" value="${escapeHtml(v.dplus??'')}" placeholder="—"></div>`}<div class="field wide"><label>Résultat</label><select data-id="${s.id}" data-key="status">${Object.entries(statusLabel).map(([a,b])=>`<option value="${a}" ${(v.status||'TODO')===a?'selected':''}>${b}</option>`).join('')}</select></div>${str?`<div class="wide"><h4>Exercices</h4><div id="ex-${s.id}">${exerciseRows(s.id)}</div><button class="btn secondary" type="button" data-add="${s.id}">+ Ajouter un exercice</button></div>`:''}<div class="field wide"><label>${str?'Notes de musculation':'Notes et ressenti'}</label><textarea data-id="${s.id}" data-key="notes" placeholder="Sensations, détails de la séance…">${escapeHtml(v.notes||'')}</textarea></div></div>`}</article>`}
+return `<article class="day ${s.date===TODAY?'today':''}" id="s-${s.id}"><div class="dayhead"><div class="datepill">${d.getDate()}</div><div class="daytitle"><div class="dayname">${escapeHtml(formatDate(s.date))}</div><h3>${escapeHtml(s.title)}</h3></div>${rest?'':`<span class="pill ${v.status==='OK'?'ok':v.status==='ECHEC'?'fail':v.status==='LIMITE'?'limit':''}">${statusLabel[v.status]||'À FAIRE'}</span>`}</div>${rest?'<p class="detail">Repos · aucune saisie nécessaire.</p>':`<div class="detail">${str?'Carnet de musculation':`Prévu : <strong>${fmt(s.km)} km</strong>${c?` · Allure cible : <strong>${pace(c.seconds)}</strong>`:''}${q&&s.w.reps?`<div>${s.w.reps} répétitions · ${fmt(s.w.work)} ${s.w.family==='SEUIL'?'min':'km'} de travail</div>`:''}`}</div>${q?`<div class="insight"><strong>${c?'Pourquoi cette allure ?':'Consignes'}</strong>${c?`<div>${escapeHtml(c.reason)}${c.source?' (référence : semaine '+c.source+')':''}</div>`:''}<div class="help">${escapeHtml(noteFor(s))}</div></div>`:''}<div class="fields">${str?'':`<div class="field"><label>Km réalisés</label><input type="number" inputmode="decimal" min="0" step="0.1" data-id="${s.id}" data-key="km" value="${escapeHtml(v.km??'')}" placeholder="—"></div><div class="field"><label>D+ réalisé (m)</label><input type="number" inputmode="numeric" min="0" step="1" data-id="${s.id}" data-key="dplus" value="${escapeHtml(v.dplus??'')}" placeholder="—"></div>`}<div class="field wide"><label>Résultat</label><select data-id="${s.id}" data-key="status">${Object.entries(statusLabel).map(([a,b])=>`<option value="${a}" ${(v.status||'TODO')===a?'selected':''}>${b}</option>`).join('')}</select></div>${str?`<div class="wide"><h4>Exercices</h4><div id="ex-${s.id}">${exerciseRows(s.id)}</div><button class="btn secondary" type="button" data-add="${s.id}">+ Ajouter un exercice</button></div>`:''}<div class="field wide"><label>${str?'Notes de musculation':'Notes et ressenti'}</label><textarea data-id="${s.id}" data-key="notes" placeholder="Sensations, détails de la séance…">${escapeHtml(v.notes||'')}</textarea></div></div>`}</article>`}
 function renderToday(){const found=allSessions().find(s=>s.date===TODAY&&s.type!=='rest')||allSessions().find(s=>s.date>=TODAY&&s.type!=='rest');return `<div class="eyebrow">ACCÈS RAPIDE</div><h1 class="title">Aujourd'hui</h1><p class="lead">${escapeHtml(formatDate(TODAY))}</p>${found?`${found.date!==TODAY?`<div class="note">Aucune séance à encoder aujourd'hui. Prochaine séance : ${escapeHtml(formatDate(found.date))}.</div>`:''}${dayCard(found)}<button class="btn secondary full" data-goweek="${found.w.week-1}">Voir cette semaine</button>`:'<div class="note">Le programme est terminé ou aucune séance future n’est prévue.</div>'}`}
 function renderWeek(){const w=PLAN[wi];return `<div class="eyebrow">TON CARNET DE ROUTE</div><h1 class="title">Ma semaine</h1><p class="lead">Du ${escapeHtml(formatDate(w.start))} au ${escapeHtml(formatDate(add(w.start,6)))}</p><div class="navweek"><button data-prev ${wi===0?'disabled':''}>‹</button><div><strong>SEMAINE ${w.week} / 22</strong><small>${escapeHtml(w.block)}</small></div><button data-next ${wi===21?'disabled':''}>›</button></div>${summary(w)}<h2 class="section">Les 7 jours</h2>${days(w).map(dayCard).join('')}`}
 function renderAll(){return `<div class="eyebrow">VUE GLOBALE</div><h1 class="title">Programme complet</h1><p class="lead">À chaque ouverture, la semaine actuelle est développée automatiquement.</p><button class="btn secondary" data-jump>Revenir à la semaine actuelle</button>${PLAN.map(w=>`<section class="weekrow ${w.week===weekNow()+1?'current':''}" id="w-${w.week}"><button data-expand="${w.week}"><span><strong>Semaine ${w.week} · ${escapeHtml(w.block)}</strong><small>${escapeHtml(formatDate(w.start))} · ${fmt(stats(w).planned)} km · D+ ${fmt(w.dplus)} m</small></span><span>${expanded===w.week-1?'⌃':'⌄'}</span></button>${expanded===w.week-1?`<div class="weekinner">${summary(w)}${days(w).map(dayCard).join('')}</div>`:''}</section>`).join('')}`}
